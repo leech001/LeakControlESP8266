@@ -7,10 +7,10 @@ class Tap:
         self.pin = pin
 
     def open(self):
-        Pin(self.pin, Pin.OUT).high()
+        Pin(self.pin, Pin.OUT, value = 1)
         return "Tap on pin %s is open" % self.pin
 
     def close(self):
-        Pin(self.pin, Pin.OUT).low()
+        Pin(self.pin, Pin.OUT, value = 0)
         return "Tap on pin %s is closed" % self.pin
-#
+

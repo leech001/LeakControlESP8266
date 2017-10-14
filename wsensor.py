@@ -9,4 +9,3 @@ class WS:
     def check(self):
         return Pin(self.pin, Pin.IN).value()
 
-#
