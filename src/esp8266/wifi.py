@@ -6,7 +6,7 @@ def activate():
     wlan.active(True)
     if not wlan.isconnected():
         print('connecting to network...')
-        wlan.connect('H37-WIFI', 'Secret2017')
+        wlan.connect('WIFI_NET', 'pass')
         while not wlan.isconnected():
             pass
         print('network config:', wlan.ifconfig())

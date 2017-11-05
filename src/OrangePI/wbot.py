@@ -1,57 +1,35 @@
 # -*- coding: utf-8 -*-
-import time
 import telepot
 import paho.mqtt.client as mqtt
 
 from telepot.namedtuple import ReplyKeyboardMarkup
 
-token = '434888669:AAH6ioqBIgUmDH3dRGz6qLpzMz0_g_wknuA$'  # Waterbot
+token = 'Telegram API token'  # Waterbot
 bot = telepot.Bot(token)
-g_chat_id = 65963379
+g_chat_id = 1111111     # Group id for notification
 
 w_topic = 'bath/+/water/'
 
 
-# Define event callbacks
-def on_connect(client, userdata, flags, rc):
-    print("rc: " + str(rc))
-
-
 def on_message(client, obj, msg):
-    print(msg.topic + " " + str(msg.qos) + " " + str(msg.payload))
+#    print(msg.topic + " " + str(msg.qos) + " " + str(msg.payload))
 
-    if msg.payload == 'yes':
+    if msg.payload == b'yes':
         if 'small' in msg.topic:
             bot.sendMessage(g_chat_id, 'Внимание протечка в маленькой ванне! Закрываем краны!')
-            time.sleep(60)
 
         elif 'big' in msg.topic:
             bot.sendMessage(g_chat_id, 'Внимание протечка в большой ванне! Закрываем краны!')
-            time.sleep(60)
-
-
-def on_publish(client, obj, mid):
-    print("mid: " + str(mid))
-
-
-def on_subscribe(client, obj, mid, granted_qos):
-    print("Subscribed: " + str(mid) + " " + str(granted_qos))
-
-
-def on_log(client, obj, level, string):
-    print(string)
 
 
 mqttc = mqtt.Client()
 # Assign event callbacks
 mqttc.on_message = on_message
-mqttc.on_connect = on_connect
-mqttc.on_publish = on_publish
-mqttc.on_subscribe = on_subscribe
 
-# Connect
-mqttc.username_pw_set('user', '#private!')
-mqttc.connect('192.168.0.21', 1883)
+
+# Connect MQTT
+mqttc.username_pw_set('user', 'pass')
+mqttc.connect('192.168.0.70', 1883)
 
 # Start subscribe, with QoS level 0
 mqttc.subscribe(w_topic, 0)
@@ -154,4 +132,4 @@ bot.message_loop({'chat': on_chat_message})
 print('Listening ...')
 
 while 1:
-    mqttc.loop()
+    mqttc.loop_forever()
