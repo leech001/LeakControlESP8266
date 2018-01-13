@@ -22,5 +22,15 @@
 Так же формируется событие через MQTT, что произошла утечка и через скрипт wbot.py данное уведомление направляется в соответствующую группу в Telegram через Telegram Bot.
 Управление кранами также доступно через специальную клавиатуру управления Telegram Bot.
 
+# Control system of water leaks (Leak Control) based on ESP8266 (NodeMCU)
+The simplest system to control leaks (leaks) watersmore.
+
+##The principle of operation
+1. On OrangePI or analogs ustanavlivaetsya MQTT Broker (mosquito) which listens to events.
+2. Run Python script for notifications and control via Telegram bot (Telepot).
+3. Firmware filled MicroPython http://micropython.org/download#esp8266
+4. On Board NodeMCU written scripts folder ESP8266
+
+Leak sensors are put in places of possible leaks. In the case of the wet element and the signal on the leg ESP8266 to work out the script and on the valves automatically receive a signal to close. The same event is generated via MQTT that has leaked through the script wbot.py this notice is sent to the appropriate group Telegram via Telegram Bot. The crane is also available via special keyboard control Telegram Bot.
 
  
