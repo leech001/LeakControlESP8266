@@ -1,47 +1,31 @@
+import esp
 import gc
-import time
 import wifi
 import machine
 import utime as time
 import usocket as socket
 import ustruct as struct
 from umqtt.robust import MQTTClient
-from tap import Tap
-from wsensor import WS
+from machine import Timer
+import config
 
-NTP_DELTA = 3155673600
-host = "pool.ntp.org"
-tap_cold = Tap(5, 0)  # D1
-tap_hot = Tap(4, 2)  # D2
-ws = (WS(14), WS(12))  # Water sensor tuples (pin)
-
+esp.osdebug(0)
 gc.enable()
 wifi.activate()
-
-# Modify below section as required
-CONFIG = {
-    # Configuration details of the MQTT broker
-    "MQTT_BROKER": "192.168.0.100",
-    "USER": "user",
-    "PASSWORD": "pass",
-    "PORT": 1883,
-    "TOPIC": b"bath/small/",
-    # unique identifier of the chip
-    "CLIENT_ID": b"ESPython_small"
-}
+tim = Timer(-1)
 
 
 def time_now():
     ntp_query = bytearray(48)
     ntp_query[0] = 0x1b
-    addr = socket.getaddrinfo(host, 123)[0][-1]
+    addr = socket.getaddrinfo(config.host, 123)[0][-1]
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(1)
     s.sendto(ntp_query, addr)
     msg = s.recv(48)
     s.close()
     val = struct.unpack("!I", msg[40:44])[0]
-    return val - NTP_DELTA
+    return val - config.ntp_delta
 
 
 # There's currently no timezone support in MicroPython, so
@@ -70,13 +54,13 @@ def internet_connected(host='8.8.8.8', port=53):
 
 
 def check_sensor():
-    for item in ws:
+    for item in config.ws:
         if item.check() == 0:
             print("Water on floor!")
-            client.publish(CONFIG['TOPIC'] + b"water/", "yes")
-            tap_cold.close()
-            tap_hot.close()
-            time.sleep(60)
+            client.publish(config.CONFIG['TOPIC'] + b"water/", "yes")
+            config.tap_cold.close()
+            config.tap_hot.close()
+        print("Check sensor %d", item.check())
 
 
 def sub_cb(topic, msg):
@@ -86,34 +70,34 @@ def sub_cb(topic, msg):
     if s_topic[2] == "tap":
         if s_topic[3] == "cold":
             if msg == b"close":
-                print(tap_cold.close())
+                print(config.tap_cold.close())
             if msg == b"open":
-                print(tap_cold.open())
+                print(config.tap_cold.open())
         elif s_topic[3] == "hot":
             if msg == b"close":
-                print(tap_hot.close())
+                print(config.tap_hot.close())
             if msg == b"open":
-                print(tap_hot.open())
+                print(config.tap_hot.open())
 
 
 def mqtt_reconnect():
     # Create an instance of MQTTClient
     global client
-    client = MQTTClient(CONFIG['CLIENT_ID'], CONFIG['MQTT_BROKER'], user=CONFIG['USER'], password=CONFIG['PASSWORD'],
-                        port=CONFIG['PORT'])
+    client = MQTTClient(config.CONFIG['CLIENT_ID'], config.CONFIG['MQTT_BROKER'], user=config.CONFIG['USER'], password=config.CONFIG['PASSWORD'],
+                        port=config.CONFIG['PORT'])
     # Attach call back handler to be called on receiving messages
     client.DEBUG = True
     client.set_callback(sub_cb)
     client.connect(clean_session=True)
-    client.subscribe(CONFIG['TOPIC'] + b"#")
-    print("ESP8266 is Connected to %s and subscribed to %s topic" % (CONFIG['MQTT_BROKER'], CONFIG['TOPIC']))
+    client.subscribe(config.CONFIG['TOPIC'] + b"#")
+    print("ESP8266 is Connected to %s and subscribed to %s topic" % (config.CONFIG['MQTT_BROKER'], config.CONFIG['TOPIC']))
 
+
+tim.init(period=5000, mode=Timer.PERIODIC, callback=lambda t: check_sensor())
 
 i = 2
-
 try:
     while True:
-        check_sensor()
         ping_test = internet_connected()
         if ping_test and i == 0:
             # Check topic
@@ -123,7 +107,7 @@ try:
             mqtt_reconnect()
             client.check_msg()
             i = 0
-        elif ping_test == False and i == 0:
+        elif ping_test is False and i == 0:
             # Disconnect
             i = 1
             client.disconnect()
@@ -134,7 +118,7 @@ try:
         else:
             # No Internet Connection
             pass
-        time.sleep(0.5)
+        time.sleep(1)
         continue
 except OSError as e:
     print(e)
