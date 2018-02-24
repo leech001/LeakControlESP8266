@@ -42,10 +42,12 @@ settime()
 
 # Check Internet connection
 def internet_connected(host='8.8.8.8', port=53):
+    global int_err_count
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(1.0)
     try:
         s.connect((host, port))
+        int_err_count = 0
         return True
     except:
         return False
