@@ -1,4 +1,3 @@
-import esp
 import gc
 import wifi
 import machine
@@ -9,10 +8,13 @@ from umqtt.robust import MQTTClient
 from machine import Timer
 import config
 
-esp.osdebug(0)
 gc.enable()
 wifi.activate()
-tim = Timer(-1)
+tim_1 = Timer(-1)
+tim_2 = Timer(-1)
+int_err_count = 0
+ping_mqtt = 0
+ping_fail = 0
 
 
 def time_now():
@@ -28,8 +30,6 @@ def time_now():
     return val - config.ntp_delta
 
 
-# There's currently no timezone support in MicroPython, so
-# utime.localtime() will return UTC time (as if it was .gmtime())
 def settime():
     t = time_now()
     tm = time.localtime(t)
@@ -54,20 +54,31 @@ def internet_connected(host='8.8.8.8', port=53):
 
 
 def check_sensor():
+    print("Check sensor ...")
     for item in config.ws:
         if item.check() == 0:
             print("Water on floor!")
             client.publish(config.CONFIG['TOPIC'] + b"water/", "yes")
-            config.tap_cold.close()
-            config.tap_hot.close()
-        print("Check sensor %d", item.check())
+            close_tap()
 
 
-def sub_cb(topic, msg):
+def close_tap():
+    config.tap_cold.close()
+    config.tap_hot.close()
+
+
+def on_message(topic, msg):
+    global ping_fail
     print("Topic: %s, Message: %s" % (topic, msg))
     s_topic = str(topic).split("/")
 
-    if s_topic[2] == "tap":
+    if s_topic[2] == "ping":
+        if int(msg) == ping_mqtt:
+            print("MQTT pong true...")
+            ping_fail = 0
+        else:
+            print("MQTT pong false... (%i)" % ping_fail)
+    elif s_topic[2] == "tap":
         if s_topic[3] == "cold":
             if msg == b"close":
                 print(config.tap_cold.close())
@@ -78,51 +89,66 @@ def sub_cb(topic, msg):
                 print(config.tap_hot.close())
             if msg == b"open":
                 print(config.tap_hot.open())
+    elif s_topic[2] == "water":
+        if msg == b"yes":
+            close_tap()
+
+
+def send_mqtt_ping():
+    global ping_fail
+    global ping_mqtt
+    ping_mqtt = time.time()
+    client.publish(config.CONFIG['TOPIC'] + b"ping/", "%s" % ping_mqtt)
+    print("Send MQTT ping (%i)" % ping_mqtt)
+    ping_fail += 1
+    if ping_fail >= config.CONFIG['MAX_MQTT_ERR']:
+        print("MQTT ping false... reconnect (%i)" % ping_fail)
+        client.disconnect()
+        mqtt_reconnect()
+        machine.reset()
+    elif ping_fail >= config.CONFIG['CRIT_MQTT_ERR']:
+        print("MQTT ping false... reset (%i)" % ping_fail)
+        machine.reset()
 
 
 def mqtt_reconnect():
-    # Create an instance of MQTTClient
     global client
-    client = MQTTClient(config.CONFIG['CLIENT_ID'], config.CONFIG['MQTT_BROKER'], user=config.CONFIG['USER'], password=config.CONFIG['PASSWORD'],
-                        port=config.CONFIG['PORT'])
-    # Attach call back handler to be called on receiving messages
+    global ping_fail
+    client = MQTTClient(config.CONFIG['CLIENT_ID'], config.CONFIG['MQTT_BROKER'], user=config.CONFIG['USER'],
+                            password=config.CONFIG['PASSWORD'], port=config.CONFIG['PORT'])
     client.DEBUG = True
-    client.set_callback(sub_cb)
-    client.connect(clean_session=True)
-    client.subscribe(config.CONFIG['TOPIC'] + b"#")
-    print("ESP8266 is Connected to %s and subscribed to %s topic" % (config.CONFIG['MQTT_BROKER'], config.CONFIG['TOPIC']))
+    client.set_callback(on_message)
+    try:
+        client.connect(clean_session=True)
+        client.subscribe(config.CONFIG['TOPIC']+b"#")
+        print("ESP8266 is Connected to %s and subscribed to %s topic" % (config.CONFIG['MQTT_BROKER'], config.CONFIG['TOPIC']+b"#"))
+    except OSError:
+        machine.reset()
 
 
-tim.init(period=5000, mode=Timer.PERIODIC, callback=lambda t: check_sensor())
+mqtt_reconnect()
+tim_1.init(period=5000, mode=Timer.PERIODIC, callback=lambda t: check_sensor())
+tim_2.init(period=10000, mode=Timer.PERIODIC, callback=lambda t: send_mqtt_ping())
 
-i = 2
+
 try:
     while True:
-        ping_test = internet_connected()
-        if ping_test and i == 0:
-            # Check topic
-            client.check_msg()
-        elif ping_test and i == 1:
-            # New session
-            mqtt_reconnect()
-            client.check_msg()
-            i = 0
-        elif ping_test is False and i == 0:
-            # Disconnect
-            i = 1
-            client.disconnect()
-        elif ping_test and i == 2:
-            # First connection
-            mqtt_reconnect()
-            i = 0
-        else:
-            # No Internet Connection
-            pass
+        print("Check message...")
+        client.check_msg()
+        if not internet_connected():
+            print("Internet connect fail...")
+            int_err_count += 1
+            if int_err_count >= config.CONFIG['MAX_INT_ERR']:
+                print("Internet reconnect")
+                client.disconnect()
+                wifi.wlan.disconnect()
+                wifi.activate()
+            elif int_err_count >= config.CONFIG['CRIT_INT_ERR']:
+                client.disconnect()
+                wifi.wlan.disconnect()
+                machine.reset()
         time.sleep(1)
         continue
 except OSError as e:
     print(e)
-    time.sleep(60)
     machine.reset()
-
-client.disconnect()
