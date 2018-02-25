@@ -107,7 +107,6 @@ def send_mqtt_ping():
         print("MQTT ping false... reconnect (%i)" % ping_fail)
         client.disconnect()
         mqtt_reconnect()
-        machine.reset()
     elif ping_fail >= config.CONFIG['CRIT_MQTT_ERR']:
         print("MQTT ping false... reset (%i)" % ping_fail)
         machine.reset()

@@ -4,9 +4,9 @@ import paho.mqtt.client as mqtt
 
 from telepot.namedtuple import ReplyKeyboardMarkup
 
-token = 'Telegram API token'  # Waterbot
+token = 'TOKEN'  # Waterbot
 bot = telepot.Bot(token)
-g_chat_id = 1111111     # Group id for notification
+g_chat_id = -261886023     # Group id for notification
 
 w_topic = 'bath/+/water/'
 
@@ -28,8 +28,8 @@ mqttc.on_message = on_message
 
 
 # Connect MQTT
-mqttc.username_pw_set('user', 'pass')
-mqttc.connect('192.168.0.70', 1883)
+mqttc.username_pw_set('', '')
+mqttc.connect('192.168.0.25', 1883)
 
 # Start subscribe, with QoS level 0
 mqttc.subscribe(w_topic, 0)
@@ -126,6 +126,7 @@ def on_chat_message(msg):
         elif command == u'Открыть холодную (б)':
             mqttc.publish('bath/big/tap/cold/', 'open')
             bot.sendMessage(chat_id, 'Кран холодной воды открыт')
+    print(msg)
 
 
 bot.message_loop({'chat': on_chat_message})
