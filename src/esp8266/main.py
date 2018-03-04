@@ -1,17 +1,15 @@
 import gc
+import uasyncio as asyncio
 import wifi
 import machine
 import utime as time
 import usocket as socket
 import ustruct as struct
-from umqtt.robust import MQTTClient
-from machine import Timer
+from umqtt.simple import MQTTClient
 import config
 
 gc.enable()
 wifi.activate()
-tim_1 = Timer(-1)
-tim_2 = Timer(-1)
 int_err_count = 0
 ping_mqtt = 0
 ping_fail = 0
@@ -43,25 +41,30 @@ settime()
 # Check Internet connection
 def internet_connected(host='8.8.8.8', port=53):
     global int_err_count
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(1.0)
-    try:
-        s.connect((host, port))
-        int_err_count = 0
-        return True
-    except:
-        return False
-    finally:
-        s.close()
+    while True:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.0)
+        try:
+            s.connect((host, port))
+            int_err_count = 0
+            return True
+        except Exception as e:
+            print("Error Internet connect: [Exception] %s: %s" % (type(e).__name__, e))
+            return False
+        finally:
+            s.close()
 
 
-def check_sensor():
-    print("Check sensor ...")
-    for item in config.ws:
-        if item.check() == 0:
-            print("Water on floor!")
-            client.publish(config.CONFIG['TOPIC'] + b"water/", "yes")
-            close_tap()
+# Check sensor
+async def check_sensor():
+    while True:
+        await asyncio.sleep_ms(1000)
+        print("Check sensor ...")
+        for item in config.ws:
+            if item.check() == 0:
+                print("Water on floor!")
+                close_tap()
+                client.publish(config.CONFIG['TOPIC'] + b"water/", "yes")
 
 
 def close_tap():
@@ -96,60 +99,88 @@ def on_message(topic, msg):
             close_tap()
 
 
-def send_mqtt_ping():
+# Ping MQTT brocker
+async def send_mqtt_ping():
     global ping_fail
     global ping_mqtt
-    ping_mqtt = time.time()
-    client.publish(config.CONFIG['TOPIC'] + b"ping/", "%s" % ping_mqtt)
-    print("Send MQTT ping (%i)" % ping_mqtt)
-    ping_fail += 1
-    if ping_fail >= config.CONFIG['MAX_MQTT_ERR']:
-        print("MQTT ping false... reconnect (%i)" % ping_fail)
-        client.disconnect()
-        mqtt_reconnect()
-    elif ping_fail >= config.CONFIG['CRIT_MQTT_ERR']:
-        print("MQTT ping false... reset (%i)" % ping_fail)
-        machine.reset()
+    while True:
+        await asyncio.sleep_ms(5000)
+        ping_mqtt = time.time()
+        client.publish(config.CONFIG['TOPIC'] + b"ping/", "%s" % ping_mqtt)
+        print("Send MQTT ping (%i)" % ping_mqtt)
+        ping_fail += 1
+
+        if ping_fail >= config.CONFIG['CRIT_MQTT_ERR']:
+            print("MQTT ping false... reset (%i)" % ping_fail)
+            machine.reset()
+
+        if ping_fail >= config.CONFIG['MAX_MQTT_ERR']:
+            print("MQTT ping false... reconnect (%i)" % ping_fail)
+            client.disconnect()
+            mqtt_reconnect()
 
 
+# MQTT reconnect
 def mqtt_reconnect():
     global client
     global ping_fail
-    client = MQTTClient(config.CONFIG['CLIENT_ID'], config.CONFIG['MQTT_BROKER'], user=config.CONFIG['USER'],
-                            password=config.CONFIG['PASSWORD'], port=config.CONFIG['PORT'])
-    client.DEBUG = True
-    client.set_callback(on_message)
     try:
+        client = MQTTClient(config.CONFIG['CLIENT_ID'], config.CONFIG['MQTT_BROKER'], user=config.CONFIG['USER'],
+                        password=config.CONFIG['PASSWORD'], port=config.CONFIG['PORT'])
+        client.DEBUG = True
+        client.set_callback(on_message)
         client.connect(clean_session=True)
-        client.subscribe(config.CONFIG['TOPIC']+b"#")
-        print("ESP8266 is Connected to %s and subscribed to %s topic" % (config.CONFIG['MQTT_BROKER'], config.CONFIG['TOPIC']+b"#"))
-    except OSError:
-        machine.reset()
+        client.subscribe(config.CONFIG['TOPIC'] + b"#")
+        print("ESP8266 is Connected to %s and subscribed to %s topic" % (
+            config.CONFIG['MQTT_BROKER'], config.CONFIG['TOPIC'] + b"#"))
+    except Exception as e:
+        print("Error in mqtt reconnection: [Exception] %s: %s" % (type(e).__name__, e))
+
+
+# Check MQTT message
+async def check_message():
+    while True:
+        await asyncio.sleep_ms(1000)
+        print("Check message...")
+        try:
+            client.check_msg()
+        except Exception as e:
+            print("Error in mqtt check message: [Exception] %s: %s" % (type(e).__name__, e))
+
+
+# Check Internet connected
+async def check_internet():
+    global int_err_count
+    try:
+        while True:
+            await asyncio.sleep_ms(10000)
+            if not internet_connected():
+                print("Internet connect fail...")
+                int_err_count += 1
+
+                if int_err_count >= config.CONFIG['CRIT_INT_ERR']:
+                    client.disconnect()
+                    wifi.wlan.disconnect()
+                    machine.reset()
+
+                if int_err_count >= config.CONFIG['MAX_INT_ERR']:
+                    print("Internet reconnect")
+                    client.disconnect()
+                    wifi.wlan.disconnect()
+                    wifi.activate()
+    except Exception as e:
+        print("Error in Internet connection: [Exception] %s: %s" % (type(e).__name__, e))
 
 
 mqtt_reconnect()
-tim_1.init(period=5000, mode=Timer.PERIODIC, callback=lambda t: check_sensor())
-tim_2.init(period=10000, mode=Timer.PERIODIC, callback=lambda t: send_mqtt_ping())
-
-
 try:
-    while True:
-        print("Check message...")
-        client.check_msg()
-        if not internet_connected():
-            print("Internet connect fail...")
-            int_err_count += 1
-            if int_err_count >= config.CONFIG['MAX_INT_ERR']:
-                print("Internet reconnect")
-                client.disconnect()
-                wifi.wlan.disconnect()
-                wifi.activate()
-            elif int_err_count >= config.CONFIG['CRIT_INT_ERR']:
-                client.disconnect()
-                wifi.wlan.disconnect()
-                machine.reset()
-        time.sleep(1)
-        continue
-except OSError as e:
-    print(e)
+    loop = asyncio.get_event_loop()
+    loop.create_task(check_sensor())
+    loop.create_task(check_message())
+    loop.create_task(check_internet())
+    loop.create_task(send_mqtt_ping())
+    loop.run_forever()
+except Exception as e:
+    print("Error: [Exception] %s: %s" % (type(e).__name__, e))
+    time.sleep(60)
     machine.reset()
