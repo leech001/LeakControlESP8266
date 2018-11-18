@@ -6,18 +6,27 @@ import utime as time
 import usocket as socket
 import ustruct as struct
 from umqtt.simple import MQTTClient
+from machine import WDT
 import config
 
+wdt = WDT()
 gc.enable()
 wifi.activate()
 int_err_count = 0
 ping_mqtt = 0
 ping_fail = 0
+water = False
 
-use_topic = config.CONFIG['DEVICE_TYPE'] + "/" + config.CONFIG['DEVICE_PLACE'] + "/" + config.CONFIG[
-    'DEVICE_PLACE_NAME'] + "/"
-device_topic = config.CONFIG['DEVICE_TYPE'] + "/" + config.CONFIG['DEVICE_PLACE'] + "/" + config.CONFIG[
-    'DEVICE_PLACE_NAME'] + "/" + config.CONFIG['DEVICE_ID'] + "/"
+place_topic = config.CONFIG['DEVICE_PLACE'] + "/"\
+              + config.CONFIG['DEVICE_TYPE'] + "/"\
+              + config.CONFIG['DEVICE_PLACE_TYPE'] + "/"\
+              + config.CONFIG['DEVICE_PLACE_NAME'] + "/"
+
+device_topic = config.CONFIG['DEVICE_PLACE'] + "/"\
+               + config.CONFIG['DEVICE_TYPE'] + "/"\
+               + config.CONFIG['DEVICE_PLACE_TYPE'] + "/"\
+               + config.CONFIG['DEVICE_PLACE_NAME'] + "/"\
+               + config.CONFIG['DEVICE_ID'] + "/"
 
 
 def time_now():
@@ -32,8 +41,8 @@ def time_now():
         s.close()
         val = struct.unpack("!I", msg[40:44])[0]
         return val - config.ntp_delta
-    except Exception as e:
-        print("Error: [Exception] %s: %s" % (type(e).__name__, e))
+    except Exception as error:
+        print("Error: [Exception] %s: %s" % (type(error).__name__, error))
         time.sleep(60)
         machine.reset()
 
@@ -44,8 +53,8 @@ def settime():
         tm = time.localtime(t)
         tm = tm[0:3] + (0,) + tm[3:6] + (0,)
         machine.RTC().datetime(tm)
-    except Exception as e:
-        print("Error: [Exception] %s: %s" % (type(e).__name__, e))
+    except Exception as error:
+        print("Error: [Exception] %s: %s" % (type(error).__name__, error))
         time.sleep(60)
         machine.reset()
 
@@ -63,8 +72,8 @@ def internet_connected(host='8.8.8.8', port=53):
             s.connect((host, port))
             int_err_count = 0
             return True
-        except Exception as e:
-            print("Error Internet connect: [Exception] %s: %s" % (type(e).__name__, e))
+        except Exception as error:
+            print("Error Internet connect: [Exception] %s: %s" % (type(error).__name__, error))
             return False
         finally:
             s.close()
@@ -72,57 +81,75 @@ def internet_connected(host='8.8.8.8', port=53):
 
 # Check sensor
 async def check_sensor():
+    global water
     while True:
         await asyncio.sleep(1)
         print("Check sensor ...")
-        for item in config.ws:
-            if item.check() == 0:
-                print("Water on floor!")
-                await close_tap()
-                client.publish(device_topic + "data/water/", "yes")
+        if (config.ws.check() == 0) and (water is False):
+            print("Water on floor!")
+            water = True
+            config.tap_cold.close()
+            config.tap_hot.close()
+            client.publish(device_topic + "data/water", "yes")
+
+        if config.ws.check() != 0:
+            print("Not leaking!")
+            client.publish(device_topic + "data/water", "no")
+            water = False
 
 
-async def close_tap():
-    await config.tap_cold.close()
-    await config.tap_hot.close()
+async def tap_check():
+    while True:
+        await asyncio.sleep(1)
+        if config.tap_cold.tap_state == "open":
+            await config.tap_cold.open()
+
+        if config.tap_cold.tap_state == "close":
+            await config.tap_cold.close()
+
+        if config.tap_hot.tap_state == "open":
+            await config.tap_hot.open()
+
+        if config.tap_hot.tap_state == "close":
+            await config.tap_hot.close()
 
 
 def on_message(topic, msg):
     global ping_fail
     print("Topic: %s, Message: %s" % (topic, msg))
-    s_topic = str(topic).split("/")
 
-    if "/check/mqtt" in topic:
+    if config.CONFIG['DEVICE_ID'] + "/state/check/mqtt" in topic:
         if int(msg) == ping_mqtt:
             print("MQTT pong true...")
             ping_fail = 0
         else:
             print("MQTT pong false... (%i)" % ping_fail)
 
-    if "/check/ping" in topic:
+    if "/state/ping" in topic:
         send_mqtt_pong(msg)
 
     if "/tap/cold" in topic:
         if msg == b"close":
-            print(config.tap_cold.close())
+            config.tap_cold.tap_state = "close"
         if msg == b"open":
-            print(config.tap_cold.open())
+            config.tap_cold.tap_state = "open"
 
     if "/tap/hot" in topic:
         if msg == b"close":
-            print(config.tap_hot.close())
+            config.tap_hot.tap_state = "close"
         if msg == b"open":
-            print(config.tap_hot.open())
+            config.tap_hot.tap_state = "open"
 
     if "/data/water" in topic:
         if msg == b"yes":
-           close_tap()
+            config.tap_cold.tap_state = "close"
+            config.tap_hot.tap_state = "close"
 
 
 # Pong MQTT connect
 def send_mqtt_pong(pong_msg):
     print(pong_msg.decode("utf-8"))
-    client.publish(device_topic + "/state/check/pong/",
+    client.publish(device_topic + "state/pong",
                    pong_msg.decode("utf-8"))
 
 
@@ -133,7 +160,7 @@ async def mqtt_check():
     while True:
         await asyncio.sleep(10)
         ping_mqtt = time.time()
-        client.publish(device_topic + "state/check/mqtt/", "%s" % ping_mqtt)
+        client.publish(device_topic + "state/check/mqtt", "%s" % ping_mqtt)
         print("Send MQTT ping (%i)" % ping_mqtt)
         ping_fail += 1
 
@@ -154,22 +181,18 @@ def mqtt_reconnect():
         client = MQTTClient(config.CONFIG['MQTT_CLIENT_ID'], config.CONFIG['MQTT_BROKER'],
                             user=config.CONFIG['MQTT_USER'],
                             password=config.CONFIG['MQTT_PASSWORD'], port=config.CONFIG['MQTT_PORT'])
-        client.DEBUG = True
+#        client.DEBUG = True
         client.set_callback(on_message)
         client.connect(clean_session=True)
-        if config.CONFIG['DEVICE_ID'] == config.CONFIG['DEVICE_ID_USE']:
-            client.subscribe(use_topic + "#")
-            print("ESP8266 is Connected to %s and subscribed to %s topic" % (
-                config.CONFIG['MQTT_BROKER'], use_topic + "#"))
-        else:
-            client.subscribe(device_topic + "#")
-            print("ESP8266 is Connected to %s and subscribed to %s topic" % (
-                config.CONFIG['MQTT_BROKER'], device_topic + "#"))
+        client.subscribe(place_topic + "#")
+        print("ESP8266 is Connected to %s and subscribed to %s topic" % (
+                config.CONFIG['MQTT_BROKER'], place_topic + "#"))
 
-        client.publish(device_topic + "info/", "%s" % [config.CONFIG['DEVICE_TYPE'], config.CONFIG['DEVICE_PLACE'],
-                                                       config.CONFIG['DEVICE_PLACE_NAME'], config.CONFIG['DEVICE_ID']])
-    except Exception as e:
-        print("Error in MQTT reconnection: [Exception] %s: %s" % (type(e).__name__, e))
+        client.publish(device_topic + "info", "%s" % [config.CONFIG['DEVICE_PLACE'], config.CONFIG['DEVICE_TYPE'],
+                                                      config.CONFIG['DEVICE_PLACE'], config.CONFIG['DEVICE_PLACE_NAME'],
+                                                      config.CONFIG['DEVICE_ID']])
+    except Exception as error:
+        print("Error in MQTT reconnection: [Exception] %s: %s" % (type(error).__name__, error))
 
 
 # Check MQTT message
@@ -179,8 +202,9 @@ async def check_message():
         print("Check message...")
         try:
             client.check_msg()
-        except Exception as e:
-            print("Error in mqtt check message: [Exception] %s: %s" % (type(e).__name__, e))
+        except Exception as error:
+            print("Error in mqtt check message: [Exception] %s: %s" % (type(error).__name__, error))
+        wdt.feed()
 
 
 # Check Internet connected and reconnect
@@ -204,8 +228,8 @@ async def check_internet():
                     client.disconnect()
                     wifi.wlan.disconnect()
                     wifi.activate()
-    except Exception as e:
-        print("Error in Internet connection: [Exception] %s: %s" % (type(e).__name__, e))
+    except Exception as error:
+        print("Error in Internet connection: [Exception] %s: %s" % (type(error).__name__, error))
 
 
 mqtt_reconnect()
@@ -215,6 +239,7 @@ try:
     loop.create_task(check_message())
     loop.create_task(check_internet())
     loop.create_task(mqtt_check())
+    loop.create_task(tap_check())
     loop.run_forever()
 except Exception as e:
     print("Error: [Exception] %s: %s" % (type(e).__name__, e))

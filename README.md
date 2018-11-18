@@ -38,7 +38,7 @@
 2. Заливается в плату NodeMCU прошивка MicroPython http://micropython.org/download#esp8266
 3. На плату NodeMCU записываются скрипты из папки ESP8266
 
-##Настройка
+## Настройка
 1. Настройка NodeMCU `\src\esp8266\config.py` (настройка управлющих пинов и MQTT)
 2. Настройка Telegram Bot `\src\OrangePI\telegram_bot\app-files\telegrambot.py` (BOT API TOKEN и MQTT)
 

@@ -2,6 +2,7 @@ import network
 import config
 global wlan
 
+
 def activate():
     global wlan
     wlan = network.WLAN(network.STA_IF)
