@@ -204,6 +204,7 @@ async def check_message():
             client.check_msg()
         except Exception as error:
             print("Error in mqtt check message: [Exception] %s: %s" % (type(error).__name__, error))
+            mqtt_reconnect()
         wdt.feed()
 
 
