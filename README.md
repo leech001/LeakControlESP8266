@@ -1,3 +1,5 @@
+# This repository is archive. New version on https://github.com/leech001/LeakControl
+
 # Система контроля утечек воды (Leak Control) на базе ESP8266 (NodeMCU)
 
 Простейшая система по контролю утечек (протечек) в местах водаразбора.
